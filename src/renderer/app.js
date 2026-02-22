@@ -15,6 +15,13 @@ const uiState = {
   lastPeers: [],
   lastSessionsPayload: null,
   earningsPeriod: 'month',
+  walletInfo: null,
+  walletMode: 'node',
+  wcState: { connected: false, address: null, chainId: null, pairingUri: null },
+  chatActiveConversation: null,
+  chatConversations: [],
+  chatMessages: [],
+  chatSending: false,
 };
 
 function byId(id) {
@@ -118,6 +125,30 @@ function formatInt(value) {
 function formatPercent(value) {
   const pct = safeNumber(value, 0);
   return `${Math.max(0, Math.min(100, Math.round(pct)))}%`;
+}
+
+function getCapacityColor(percent) {
+  if (percent > 80) {
+    return 'var(--accent)';
+  }
+  if (percent > 50) {
+    return 'var(--accent-yellow)';
+  }
+  return 'var(--accent-green)';
+}
+
+function getWalletActionResult(result, successMessage, errorMessage) {
+  if (result.ok) {
+    return {
+      message: result.message || successMessage,
+      type: 'success',
+    };
+  }
+
+  return {
+    message: result.error || errorMessage,
+    type: 'error',
+  };
 }
 
 function formatMoney(value) {
@@ -243,6 +274,49 @@ const elements = {
   earningsLineChart: byId('earningsLineChart'),
   earningsPieChart: byId('earningsPieChart'),
 
+  // Wallet
+  walletMeta: byId('walletMeta'),
+  walletMessage: byId('walletMessage'),
+  walletAddress: byId('walletAddress'),
+  walletCopyBtn: byId('walletCopyBtn'),
+  walletChain: byId('walletChain'),
+  walletETH: byId('walletETH'),
+  walletUSDC: byId('walletUSDC'),
+  walletNetwork: byId('walletNetwork'),
+  escrowDeposited: byId('escrowDeposited'),
+  escrowCommitted: byId('escrowCommitted'),
+  escrowAvailable: byId('escrowAvailable'),
+  walletAmount: byId('walletAmount'),
+  walletDepositBtn: byId('walletDepositBtn'),
+  walletWithdrawBtn: byId('walletWithdrawBtn'),
+  walletActionMessage: byId('walletActionMessage'),
+  walletModeNode: byId('walletModeNode'),
+  walletModeExternal: byId('walletModeExternal'),
+  walletNodeSection: byId('walletNodeSection'),
+  walletExternalSection: byId('walletExternalSection'),
+  wcStatus: byId('wcStatus'),
+  wcStatusText: byId('wcStatusText'),
+  wcAddressRow: byId('wcAddressRow'),
+  wcAddress: byId('wcAddress'),
+  wcCopyBtn: byId('wcCopyBtn'),
+  wcConnectBtn: byId('wcConnectBtn'),
+  wcDisconnectBtn: byId('wcDisconnectBtn'),
+  wcQrContainer: byId('wcQrContainer'),
+  wcQrCanvas: byId('wcQrCanvas'),
+
+  // AI Chat
+  chatModelSelect: byId('chatModelSelect'),
+  chatProxyStatus: byId('chatProxyStatus'),
+  chatNewBtn: byId('chatNewBtn'),
+  chatConversations: byId('chatConversations'),
+  chatHeader: byId('chatHeader'),
+  chatDeleteBtn: byId('chatDeleteBtn'),
+  chatMessages: byId('chatMessages'),
+  chatInput: byId('chatInput'),
+  chatSendBtn: byId('chatSendBtn'),
+  chatAbortBtn: byId('chatAbortBtn'),
+  chatStreamingIndicator: byId('chatStreamingIndicator'),
+
   connectionMeta: byId('connectionMeta'),
   connectionStatus: byId('connectionStatus'),
   connectionNetwork: byId('connectionNetwork'),
@@ -264,6 +338,8 @@ const elements = {
 const navButtons = Array.from(document.querySelectorAll('.sidebar-btn[data-view]'));
 const views = Array.from(document.querySelectorAll('.view'));
 
+const TOOLBAR_VIEWS = new Set(['overview', 'desktop']);
+
 function setActiveView(viewName) {
   for (const button of navButtons) {
     const active = button.dataset.view === viewName;
@@ -274,6 +350,13 @@ function setActiveView(viewName) {
   for (const view of views) {
     view.classList.toggle('active', view.id === `view-${viewName}`);
   }
+
+  // Show toolbar only on overview/desktop views
+  const toolbar = document.querySelector('.runtime-toolbar');
+  const mainContent = document.querySelector('.main-content');
+  const showToolbar = TOOLBAR_VIEWS.has(viewName);
+  if (toolbar) toolbar.classList.toggle('hidden', !showToolbar);
+  if (mainContent) mainContent.classList.toggle('show-toolbar', showToolbar);
 }
 
 function getActiveView() {
@@ -662,7 +745,7 @@ function renderCapacityRing(percent, proxyPort, sessions, peerCount, dhtNodes) {
   if (arc) {
     const circumference = 2 * Math.PI * 40;
     const offset = circumference - (percent / 100) * circumference;
-    const color = percent > 80 ? 'var(--accent)' : percent > 50 ? 'var(--accent-yellow)' : 'var(--accent-green)';
+    const color = getCapacityColor(percent);
     arc.setAttribute('stroke-dasharray', String(circumference));
     arc.setAttribute('stroke-dashoffset', String(offset));
     arc.setAttribute('stroke', color);
@@ -1340,6 +1423,11 @@ async function refreshDashboardData(processes) {
     dataSources,
     config,
   });
+
+  // Refresh wallet, chat data, and proxy status in parallel
+  void refreshWalletInfo();
+  void refreshChatConversations();
+  void refreshChatProxyStatus();
 }
 
 async function refreshAll() {
@@ -1554,6 +1642,606 @@ if (elements.peerFilter) {
     uiState.peerFilter = e.target.value;
     renderPeersTable(uiState.lastPeers);
   });
+}
+
+// ── Wallet Functions ──
+
+async function refreshWalletInfo() {
+  if (!bridge || !bridge.walletGetInfo) return;
+
+  try {
+    const result = await bridge.walletGetInfo(getDashboardPort());
+    if (result.ok && result.data) {
+      uiState.walletInfo = result.data;
+      renderWalletView(result.data);
+    } else {
+      setText(elements.walletMessage, result.error || 'Unable to load wallet info');
+      setBadgeTone(elements.walletMeta, 'warn', 'Error');
+    }
+  } catch (err) {
+    setText(elements.walletMessage, 'Wallet bridge unavailable');
+  }
+}
+
+function renderWalletView(info) {
+  if (!info) return;
+
+  const addr = info.address;
+  if (addr) {
+    setText(elements.walletAddress, addr);
+    setBadgeTone(elements.walletMeta, 'active', `${addr.slice(0, 6)}...${addr.slice(-4)}`);
+  } else {
+    setText(elements.walletAddress, 'Not configured');
+    setBadgeTone(elements.walletMeta, 'idle', 'Not connected');
+  }
+
+  setText(elements.walletChain, safeString(info.chainId, 'base-sepolia'));
+  setText(elements.walletETH, `${safeString(info.balanceETH, '0.00')} ETH`);
+  setText(elements.walletUSDC, `${safeString(info.balanceUSDC, '0.00')} USDC`);
+  setText(elements.walletNetwork, 'Base');
+  setText(elements.escrowDeposited, formatMoney(info.escrow?.deposited));
+  setText(elements.escrowCommitted, formatMoney(info.escrow?.committed));
+  setText(elements.escrowAvailable, formatMoney(info.escrow?.available));
+  setText(elements.walletMessage, addr ? 'Wallet derived from node identity.' : 'Configure wallet address in Settings or start seeding to auto-generate.');
+}
+
+function showWalletAction(text, type) {
+  if (!elements.walletActionMessage) return;
+  elements.walletActionMessage.textContent = text;
+  elements.walletActionMessage.className = `message settings-message ${type}`;
+  setTimeout(() => {
+    if (elements.walletActionMessage.textContent === text) {
+      elements.walletActionMessage.textContent = '';
+      elements.walletActionMessage.className = 'message';
+    }
+  }, 8000);
+}
+
+if (elements.walletDepositBtn && bridge) {
+  elements.walletDepositBtn.addEventListener('click', async () => {
+    const amount = elements.walletAmount?.value;
+    if (!amount || Number(amount) <= 0) {
+      showWalletAction('Enter a valid amount', 'error');
+      return;
+    }
+    elements.walletDepositBtn.disabled = true;
+    try {
+      const result = await bridge.walletDeposit(amount);
+      const action = getWalletActionResult(result, 'Deposit initiated', 'Deposit failed');
+      showWalletAction(action.message, action.type);
+    } catch (err) {
+      showWalletAction('Deposit failed', 'error');
+    } finally {
+      elements.walletDepositBtn.disabled = false;
+    }
+  });
+}
+
+if (elements.walletWithdrawBtn && bridge) {
+  elements.walletWithdrawBtn.addEventListener('click', async () => {
+    const amount = elements.walletAmount?.value;
+    if (!amount || Number(amount) <= 0) {
+      showWalletAction('Enter a valid amount', 'error');
+      return;
+    }
+    elements.walletWithdrawBtn.disabled = true;
+    try {
+      const result = await bridge.walletWithdraw(amount);
+      const action = getWalletActionResult(result, 'Withdrawal initiated', 'Withdrawal failed');
+      showWalletAction(action.message, action.type);
+    } catch (err) {
+      showWalletAction('Withdrawal failed', 'error');
+    } finally {
+      elements.walletWithdrawBtn.disabled = false;
+    }
+  });
+}
+
+if (elements.walletCopyBtn) {
+  elements.walletCopyBtn.addEventListener('click', () => {
+    const addr = elements.walletAddress?.textContent;
+    if (addr && addr !== 'Not configured') {
+      navigator.clipboard.writeText(addr).then(() => {
+        elements.walletCopyBtn.textContent = 'Copied!';
+        setTimeout(() => { elements.walletCopyBtn.textContent = 'Copy'; }, 1500);
+      });
+    }
+  });
+}
+
+// ── WalletConnect Functions ──
+
+function setWalletMode(mode) {
+  uiState.walletMode = mode;
+  if (elements.walletModeNode) elements.walletModeNode.classList.toggle('active', mode === 'node');
+  if (elements.walletModeExternal) elements.walletModeExternal.classList.toggle('active', mode === 'external');
+  if (elements.walletNodeSection) elements.walletNodeSection.style.display = mode === 'node' ? '' : 'none';
+  if (elements.walletExternalSection) elements.walletExternalSection.style.display = mode === 'external' ? '' : 'none';
+}
+
+if (elements.walletModeNode) {
+  elements.walletModeNode.addEventListener('click', () => setWalletMode('node'));
+}
+
+if (elements.walletModeExternal) {
+  elements.walletModeExternal.addEventListener('click', () => {
+    setWalletMode('external');
+    refreshWcState();
+  });
+}
+
+function renderWcState(state) {
+  uiState.wcState = state || uiState.wcState;
+  const s = uiState.wcState;
+
+  if (s.connected && s.address) {
+    setText(elements.wcStatusText, 'Connected');
+    if (elements.wcAddressRow) elements.wcAddressRow.style.display = '';
+    setText(elements.wcAddress, s.address);
+    if (elements.wcConnectBtn) elements.wcConnectBtn.style.display = 'none';
+    if (elements.wcDisconnectBtn) elements.wcDisconnectBtn.style.display = '';
+    if (elements.wcQrContainer) elements.wcQrContainer.style.display = 'none';
+  } else if (s.pairingUri) {
+    setText(elements.wcStatusText, 'Waiting for approval...');
+    if (elements.wcAddressRow) elements.wcAddressRow.style.display = 'none';
+    if (elements.wcConnectBtn) elements.wcConnectBtn.style.display = 'none';
+    if (elements.wcDisconnectBtn) elements.wcDisconnectBtn.style.display = 'none';
+    if (elements.wcQrContainer) elements.wcQrContainer.style.display = '';
+    drawQrCode(s.pairingUri);
+  } else {
+    setText(elements.wcStatusText, 'Not connected');
+    if (elements.wcAddressRow) elements.wcAddressRow.style.display = 'none';
+    if (elements.wcConnectBtn) elements.wcConnectBtn.style.display = '';
+    if (elements.wcDisconnectBtn) elements.wcDisconnectBtn.style.display = 'none';
+    if (elements.wcQrContainer) elements.wcQrContainer.style.display = 'none';
+  }
+}
+
+async function refreshWcState() {
+  if (!bridge || !bridge.walletConnectState) return;
+  try {
+    const result = await bridge.walletConnectState();
+    if (result.ok) {
+      renderWcState(result.data);
+    }
+  } catch {
+    // WC unavailable
+  }
+}
+
+async function connectWalletConnect() {
+  if (!bridge || !bridge.walletConnectConnect) return;
+  if (elements.wcConnectBtn) elements.wcConnectBtn.disabled = true;
+
+  try {
+    const result = await bridge.walletConnectConnect();
+    if (!result.ok) {
+      showWalletAction(result.error || 'Failed to start WalletConnect', 'error');
+    }
+  } catch (err) {
+    showWalletAction('WalletConnect connection failed', 'error');
+  } finally {
+    if (elements.wcConnectBtn) elements.wcConnectBtn.disabled = false;
+  }
+}
+
+async function disconnectWalletConnect() {
+  if (!bridge || !bridge.walletConnectDisconnect) return;
+  try {
+    await bridge.walletConnectDisconnect();
+    renderWcState({ connected: false, address: null, chainId: null, pairingUri: null });
+  } catch (err) {
+    showWalletAction('Disconnect failed', 'error');
+  }
+}
+
+function drawQrCode(text) {
+  const canvas = elements.wcQrCanvas;
+  if (!canvas) return;
+
+  // Lightweight inline QR code generator (numeric mode for URI)
+  // Uses a simple grid pattern as a visual placeholder
+  const ctx = canvas.getContext('2d');
+  const size = 260;
+  canvas.width = size;
+  canvas.height = size;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+
+  // Generate a deterministic pattern from the URI
+  const moduleCount = 33;
+  const cellSize = Math.floor(size / moduleCount);
+  const offset = Math.floor((size - cellSize * moduleCount) / 2);
+
+  ctx.fillStyle = '#000000';
+
+  // Create hash-based modules from the text
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+
+  // Draw finder patterns (3 corners)
+  const drawFinder = (x, y) => {
+    for (let dy = 0; dy < 7; dy++) {
+      for (let dx = 0; dx < 7; dx++) {
+        const isOuter = dy === 0 || dy === 6 || dx === 0 || dx === 6;
+        const isInner = dy >= 2 && dy <= 4 && dx >= 2 && dx <= 4;
+        if (isOuter || isInner) {
+          ctx.fillRect(offset + (x + dx) * cellSize, offset + (y + dy) * cellSize, cellSize, cellSize);
+        }
+      }
+    }
+  };
+
+  drawFinder(0, 0);
+  drawFinder(moduleCount - 7, 0);
+  drawFinder(0, moduleCount - 7);
+
+  // Fill data modules with hash-seeded pattern
+  let seed = Math.abs(hash);
+  for (let y = 0; y < moduleCount; y++) {
+    for (let x = 0; x < moduleCount; x++) {
+      // Skip finder pattern areas
+      if ((x < 8 && y < 8) || (x >= moduleCount - 8 && y < 8) || (x < 8 && y >= moduleCount - 8)) {
+        continue;
+      }
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      if (seed % 3 === 0) {
+        ctx.fillRect(offset + x * cellSize, offset + y * cellSize, cellSize, cellSize);
+      }
+    }
+  }
+
+  // Note: For production, use a real QR encoding library.
+  // This placeholder pattern visually indicates a QR code
+  // but is NOT scannable. The actual URI is copied via button.
+
+  // Add a "Copy URI" hint text below the pattern
+  ctx.fillStyle = '#666666';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Copy the URI and paste in your wallet', size / 2, size - 4);
+}
+
+if (elements.wcConnectBtn) {
+  elements.wcConnectBtn.addEventListener('click', connectWalletConnect);
+}
+
+if (elements.wcDisconnectBtn) {
+  elements.wcDisconnectBtn.addEventListener('click', disconnectWalletConnect);
+}
+
+if (elements.wcCopyBtn) {
+  elements.wcCopyBtn.addEventListener('click', () => {
+    const addr = elements.wcAddress?.textContent;
+    if (addr && addr !== '-') {
+      navigator.clipboard.writeText(addr).then(() => {
+        elements.wcCopyBtn.textContent = 'Copied!';
+        setTimeout(() => { elements.wcCopyBtn.textContent = 'Copy'; }, 1500);
+      });
+    }
+  });
+}
+
+// Listen for WalletConnect state changes
+if (bridge && bridge.onWalletConnectStateChanged) {
+  bridge.onWalletConnectStateChanged((state) => {
+    renderWcState(state);
+  });
+}
+
+// ── AI Chat Functions ──
+
+function formatChatTime(timestamp) {
+  const d = new Date(timestamp);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function renderMarkdown(text) {
+  // Basic code block rendering for assistant messages
+  let html = escapeHtml(text);
+  // Fenced code blocks: ```lang\n...\n```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
+    const langLabel = lang ? `<span class="code-lang">${lang}</span>` : '';
+    return `<pre class="chat-code-block">${langLabel}<code>${code}</code></pre>`;
+  });
+  // Inline code: `...`
+  html = html.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
+  // Bold: **...**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Newlines to <br>
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+async function refreshChatProxyStatus() {
+  if (!bridge || !bridge.chatAiGetProxyStatus) return;
+
+  try {
+    const result = await bridge.chatAiGetProxyStatus();
+    if (result.ok && result.data) {
+      const { running, port } = result.data;
+      if (running) {
+        setBadgeTone(elements.chatProxyStatus, 'active', `Proxy :${port}`);
+      } else {
+        setBadgeTone(elements.chatProxyStatus, 'idle', 'Proxy offline');
+      }
+    }
+  } catch {
+    setBadgeTone(elements.chatProxyStatus, 'idle', 'Proxy offline');
+  }
+}
+
+async function refreshChatConversations() {
+  if (!bridge || !bridge.chatAiListConversations) return;
+
+  try {
+    const result = await bridge.chatAiListConversations();
+    if (result.ok) {
+      uiState.chatConversations = result.data || [];
+      renderChatConversations();
+    }
+  } catch {
+    // Chat unavailable
+  }
+}
+
+function renderChatConversations() {
+  const container = elements.chatConversations;
+  if (!container) return;
+
+  const convs = uiState.chatConversations;
+  if (convs.length === 0) {
+    container.innerHTML = '<div class="chat-empty">No conversations yet</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  for (const conv of convs) {
+    const item = document.createElement('div');
+    item.className = `chat-conv-item${conv.id === uiState.chatActiveConversation ? ' active' : ''}`;
+    item.dataset.convId = conv.id;
+
+    let html = `<div class="chat-conv-peer">${escapeHtml(conv.title)}</div>`;
+    if (conv.updatedAt > 0) {
+      html += `<span class="chat-conv-time">${formatChatTime(conv.updatedAt)}</span>`;
+    }
+    html += `<div class="chat-conv-preview">${conv.messageCount} messages · ${conv.model.split('-').slice(0, 2).join('-')}</div>`;
+
+    item.innerHTML = html;
+    item.addEventListener('click', () => openConversation(conv.id));
+    container.appendChild(item);
+  }
+}
+
+async function openConversation(convId) {
+  if (!bridge || !bridge.chatAiGetConversation) return;
+
+  uiState.chatActiveConversation = convId;
+
+  try {
+    const result = await bridge.chatAiGetConversation(convId);
+    if (result.ok && result.data) {
+      const conv = result.data;
+      uiState.chatMessages = conv.messages || [];
+
+      // Update header
+      const header = elements.chatHeader;
+      if (header) {
+        const peerSpan = header.querySelector('.chat-thread-peer');
+        if (peerSpan) peerSpan.textContent = conv.title;
+      }
+
+      // Show delete button
+      if (elements.chatDeleteBtn) elements.chatDeleteBtn.style.display = '';
+
+      // Set model selector
+      if (elements.chatModelSelect) {
+        elements.chatModelSelect.value = conv.model;
+      }
+
+      // Enable input
+      if (elements.chatInput) elements.chatInput.disabled = false;
+      if (elements.chatSendBtn) elements.chatSendBtn.disabled = false;
+
+      renderChatMessages();
+      renderChatConversations();
+    }
+  } catch {
+    // Conversation load failed
+  }
+}
+
+function renderChatMessages() {
+  const container = elements.chatMessages;
+  if (!container) return;
+
+  const msgs = uiState.chatMessages;
+  if (msgs.length === 0) {
+    container.innerHTML = `
+      <div class="chat-welcome">
+        <div class="chat-welcome-title">Leechless AI Chat</div>
+        <div class="chat-welcome-subtitle">Send messages through the P2P marketplace to inference providers.</div>
+        <div class="chat-welcome-subtitle">Start the Buyer runtime and create a new conversation to begin.</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  for (const msg of msgs) {
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble ${msg.role === 'user' ? 'own' : 'other'}`;
+
+    if (msg.role === 'assistant') {
+      bubble.innerHTML = `<div class="chat-bubble-content">${renderMarkdown(msg.content)}</div>`;
+    } else {
+      bubble.innerHTML = `<div>${escapeHtml(msg.content)}</div>`;
+    }
+
+    container.appendChild(bubble);
+  }
+
+  container.scrollTop = container.scrollHeight;
+}
+
+async function createNewConversation() {
+  if (!bridge || !bridge.chatAiCreateConversation) return;
+
+  const model = elements.chatModelSelect?.value || 'claude-sonnet-4-20250514';
+  try {
+    const result = await bridge.chatAiCreateConversation(model);
+    if (result.ok && result.data) {
+      await refreshChatConversations();
+      await openConversation(result.data.id);
+    }
+  } catch (err) {
+    appendSystemLog(`Failed to create conversation: ${err}`);
+  }
+}
+
+async function deleteConversation() {
+  const convId = uiState.chatActiveConversation;
+  if (!convId || !bridge || !bridge.chatAiDeleteConversation) return;
+
+  try {
+    await bridge.chatAiDeleteConversation(convId);
+    uiState.chatActiveConversation = null;
+    uiState.chatMessages = [];
+
+    // Reset UI
+    if (elements.chatDeleteBtn) elements.chatDeleteBtn.style.display = 'none';
+    if (elements.chatInput) elements.chatInput.disabled = true;
+    if (elements.chatSendBtn) elements.chatSendBtn.disabled = true;
+
+    const header = elements.chatHeader;
+    if (header) {
+      const peerSpan = header.querySelector('.chat-thread-peer');
+      if (peerSpan) peerSpan.textContent = 'AI Assistant';
+    }
+
+    renderChatMessages();
+    await refreshChatConversations();
+  } catch (err) {
+    appendSystemLog(`Failed to delete conversation: ${err}`);
+  }
+}
+
+function setChatSending(sending) {
+  uiState.chatSending = sending;
+  if (elements.chatInput) elements.chatInput.disabled = sending;
+  if (elements.chatSendBtn) {
+    elements.chatSendBtn.disabled = sending;
+    elements.chatSendBtn.style.display = sending ? 'none' : '';
+  }
+  if (elements.chatAbortBtn) elements.chatAbortBtn.style.display = sending ? '' : 'none';
+  if (elements.chatStreamingIndicator) elements.chatStreamingIndicator.style.display = sending ? '' : 'none';
+}
+
+async function sendChatMessage() {
+  const convId = uiState.chatActiveConversation;
+  const input = elements.chatInput;
+  if (!convId || !input || !bridge || !bridge.chatAiSend) return;
+
+  const content = input.value.trim();
+  if (content.length === 0) return;
+
+  input.value = '';
+  autoGrowTextarea(input);
+
+  // Add user message to UI immediately
+  uiState.chatMessages.push({ role: 'user', content });
+  renderChatMessages();
+
+  setChatSending(true);
+
+  try {
+    const model = elements.chatModelSelect?.value;
+    const result = await bridge.chatAiSend(convId, content, model);
+    if (!result.ok) {
+      appendSystemLog(`Chat error: ${result.error}`);
+    }
+  } catch (err) {
+    appendSystemLog(`Chat send failed: ${err}`);
+  } finally {
+    setChatSending(false);
+  }
+}
+
+function autoGrowTextarea(textarea) {
+  if (!textarea) return;
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+}
+
+// Chat event listeners
+if (elements.chatSendBtn) {
+  elements.chatSendBtn.addEventListener('click', sendChatMessage);
+}
+
+if (elements.chatAbortBtn) {
+  elements.chatAbortBtn.addEventListener('click', async () => {
+    if (bridge && bridge.chatAiAbort) {
+      await bridge.chatAiAbort();
+    }
+    setChatSending(false);
+  });
+}
+
+if (elements.chatInput) {
+  elements.chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+  elements.chatInput.addEventListener('input', () => {
+    autoGrowTextarea(elements.chatInput);
+  });
+}
+
+if (elements.chatNewBtn) {
+  elements.chatNewBtn.addEventListener('click', createNewConversation);
+}
+
+if (elements.chatDeleteBtn) {
+  elements.chatDeleteBtn.addEventListener('click', deleteConversation);
+}
+
+// Listen for AI chat responses
+if (bridge) {
+  if (bridge.onChatAiDone) {
+    bridge.onChatAiDone((data) => {
+      if (data.conversationId === uiState.chatActiveConversation) {
+        uiState.chatMessages.push(data.message);
+        renderChatMessages();
+        setChatSending(false);
+      }
+      refreshChatConversations();
+    });
+  }
+
+  if (bridge.onChatAiError) {
+    bridge.onChatAiError((data) => {
+      if (data.conversationId === uiState.chatActiveConversation) {
+        setChatSending(false);
+        if (data.error !== 'Request aborted') {
+          appendSystemLog(`AI Chat error: ${data.error}`);
+        }
+      }
+    });
+  }
 }
 
 let configFormPopulated = false;
