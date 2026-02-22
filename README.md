@@ -10,6 +10,7 @@ so end users do not need to use terminal commands directly.
 - Seller mode (`leechless seed --provider <name>`)
 - Buyer mode (`leechless connect --router <name>`)
 - Dashboard server (`leechless dashboard --port <port> --no-open`)
+- Embedded dashboard panel inside Electron (no browser tab required)
 - Live process logs and daemon state snapshot (`~/.leechless/daemon.state.json`)
 
 ## Prerequisites

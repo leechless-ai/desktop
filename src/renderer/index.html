@@ -7,69 +7,365 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app">
-      <header class="topbar">
-        <div>
-          <h1>Leechless Desktop</h1>
-          <p class="subtitle">Run seller, buyer proxy, and dashboard without terminal</p>
+    <div class="app-container">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-logo">
+            <h1 class="sidebar-title">Leechless</h1>
+          </div>
+          <p class="sidebar-version">Desktop Runtime Console</p>
+          <p id="runtimeSummary" class="sidebar-status">No active services</p>
         </div>
-        <div class="actions">
-          <button id="refreshBtn">Refresh</button>
-          <button id="clearLogsBtn" class="secondary">Clear Logs</button>
+
+        <ul class="sidebar-nav" role="tablist" aria-label="Dashboard Views">
+          <li><button class="sidebar-btn active" data-view="overview" role="tab">Overview</button></li>
+          <li><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
+          <li><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
+          <li><button class="sidebar-btn" data-view="earnings" role="tab">Earnings</button></li>
+          <li><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
+          <li><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
+          <li><button class="sidebar-btn" data-view="desktop" role="tab">Desktop</button></li>
+        </ul>
+
+        <div class="sidebar-footer">
+          <div class="runtime-chip-wrap">
+            <span class="runtime-chip">Seller <strong id="seedBadge">Stopped</strong></span>
+            <span class="runtime-chip">Buyer <strong id="connectBadge">Stopped</strong></span>
+            <span class="runtime-chip">Dash <strong id="dashboardBadge">Stopped</strong></span>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <section class="grid">
-        <article class="card">
-          <h2>Seller (Seed)</h2>
-          <label>
-            Provider
-            <input id="seedProvider" value="anthropic" />
-          </label>
-          <div class="row">
-            <button id="seedStartBtn">Start</button>
-            <button id="seedStopBtn" class="danger">Stop</button>
+      <main class="main-content">
+        <section class="runtime-toolbar">
+          <div class="toolbar-header">
+            <h2>Desktop Controls</h2>
+            <div class="toolbar-actions">
+              <button id="startAllBtn">Start All</button>
+              <button id="stopAllBtn" class="danger">Stop All</button>
+              <button id="scanNetworkBtn" class="secondary">Scan DHT</button>
+              <button id="refreshBtn" class="secondary">Refresh</button>
+              <button id="clearLogsBtn" class="danger">Clear Logs</button>
+            </div>
           </div>
-          <p id="seedState" class="state">Unknown</p>
-        </article>
 
-        <article class="card">
-          <h2>Buyer (Connect)</h2>
-          <label>
-            Router
-            <input id="connectRouter" value="claude-code" />
-          </label>
-          <div class="row">
-            <button id="connectStartBtn">Start</button>
-            <button id="connectStopBtn" class="danger">Stop</button>
+          <div class="runtime-grid">
+            <article class="control-card">
+              <h3>Seller Runtime</h3>
+              <label>Provider<input id="seedProvider" value="anthropic" /></label>
+              <div class="row">
+                <button id="seedStartBtn">Start</button>
+                <button id="seedStopBtn" class="danger">Stop</button>
+              </div>
+              <p id="seedState" class="state status-stopped">Unknown</p>
+            </article>
+
+            <article class="control-card">
+              <h3>Buyer Runtime</h3>
+              <label>Router<input id="connectRouter" value="claude-code" /></label>
+              <div class="row">
+                <button id="connectStartBtn">Start</button>
+                <button id="connectStopBtn" class="danger">Stop</button>
+              </div>
+              <p id="connectState" class="state status-stopped">Unknown</p>
+            </article>
+
+            <article class="control-card">
+              <h3>Dashboard Engine</h3>
+              <label>Port<input id="dashboardPort" type="number" value="3117" /></label>
+              <div class="row">
+                <button id="dashboardRestartBtn">Restart</button>
+                <button id="dashboardOpenBtn" class="secondary">Open UI</button>
+              </div>
+              <p id="dashboardState" class="state status-stopped">Unknown</p>
+            </article>
           </div>
-          <p id="connectState" class="state">Unknown</p>
-        </article>
+        </section>
 
-        <article class="card">
-          <h2>Dashboard</h2>
-          <label>
-            Port
-            <input id="dashboardPort" type="number" value="3117" />
-          </label>
-          <div class="row">
-            <button id="dashboardStartBtn">Start</button>
-            <button id="dashboardStopBtn" class="danger">Stop</button>
-            <button id="dashboardOpenBtn" class="secondary">Open</button>
-          </div>
-          <p id="dashboardState" class="state">Unknown</p>
-        </article>
-      </section>
+        <section class="view-host">
+          <section id="view-overview" class="view active" role="tabpanel">
+            <div class="page-header">
+              <h2>Overview</h2>
+              <div id="overviewBadge" class="connection-badge badge-idle">Idle</div>
+            </div>
 
-      <section class="card">
-        <h2>Daemon State Snapshot</h2>
-        <pre id="daemonState">No daemon state file found yet.</pre>
-      </section>
+            <div class="stat-grid">
+              <div class="stat-card">
+                <p class="stat-label">Node State</p>
+                <p id="ovNodeState" class="stat-value">idle</p>
+              </div>
+              <div class="stat-card">
+                <p class="stat-label">Active Peers</p>
+                <p id="ovPeers" class="stat-value">0</p>
+              </div>
+              <div id="ovSessionsCard" class="stat-card">
+                <p class="stat-label">Active Sessions</p>
+                <p id="ovSessions" class="stat-value">0</p>
+              </div>
+              <div class="stat-card">
+                <p class="stat-label">Earnings Today</p>
+                <p id="ovEarnings" class="stat-value">$0.00</p>
+              </div>
+              <div class="stat-card">
+                <p class="stat-label">DHT Health</p>
+                <p id="ovDhtHealth" class="stat-value">Down</p>
+              </div>
+              <div class="stat-card">
+                <p class="stat-label">Uptime</p>
+                <p id="ovUptime" class="stat-value">0s</p>
+              </div>
+            </div>
 
-      <section class="card logs-card">
-        <h2>Runtime Logs</h2>
-        <div id="logs" class="logs" aria-live="polite"></div>
-      </section>
+            <div class="panel-grid two-col">
+              <article class="panel">
+                <div class="panel-head">
+                  <h3>Top Peers</h3>
+                  <span id="ovPeersCount" class="panel-count">0</span>
+                </div>
+                <div class="table-wrap compact">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Peer</th>
+                        <th>Providers</th>
+                        <th>Rep</th>
+                      </tr>
+                    </thead>
+                    <tbody id="overviewPeersBody">
+                      <tr><td colspan="3" class="empty">No peers yet.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article class="panel">
+                <div class="panel-head">
+                  <h3>Capacity & Earnings</h3>
+                </div>
+                <div class="capacity-section">
+                  <div id="capacityRing" class="capacity-ring">
+                    <svg width="100" height="100" viewBox="0 0 100 100">
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border)" stroke-width="8" />
+                      <circle id="capacityArc" cx="50" cy="50" r="40" fill="none"
+                        stroke="var(--accent-green)" stroke-width="8"
+                        stroke-linecap="round"
+                        stroke-dasharray="251.33" stroke-dashoffset="251.33"
+                        transform="rotate(-90 50 50)"
+                        style="transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease" />
+                    </svg>
+                    <div class="capacity-ring-label">
+                      <div id="capacityPercent" class="capacity-ring-value">0%</div>
+                      <div class="capacity-ring-text">capacity</div>
+                    </div>
+                  </div>
+                  <div class="capacity-meta">
+                    <div class="capacity-row"><span class="capacity-label">Proxy Port</span><span id="ovProxyPort" class="capacity-val mono">-</span></div>
+                    <div class="capacity-row"><span class="capacity-label">Sessions</span><span id="ovCapSessions" class="capacity-val">0</span></div>
+                    <div class="capacity-row"><span class="capacity-label">Peers</span><span id="ovCapPeers" class="capacity-val">0</span></div>
+                    <div class="capacity-row"><span class="capacity-label">DHT Nodes</span><span id="ovCapDht" class="capacity-val">0</span></div>
+                  </div>
+                </div>
+                <div class="panel-divider"></div>
+                <div class="panel-head"><h3>Recent Earnings</h3></div>
+                <div id="miniChartContainer" class="mini-chart">
+                  <div class="mini-chart-empty">No earnings data yet</div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section id="view-peers" class="view" role="tabpanel">
+            <div class="page-header">
+              <h2>Peers</h2>
+              <div class="page-header-right">
+                <input id="peerFilter" type="text" class="filter-input" placeholder="Filter peers..." />
+                <button id="scanNetworkBtnPeers" class="secondary">Scan DHT</button>
+                <div id="peersMeta" class="connection-badge badge-idle">0 peers</div>
+              </div>
+            </div>
+            <p id="peersMessage" class="message">Loading peer visibility...</p>
+            <div class="panel">
+              <div class="table-wrap">
+                <table class="table">
+                  <thead id="peersHead">
+                    <tr>
+                      <th class="sortable" data-sort="peerId">Peer</th>
+                      <th class="sortable" data-sort="source">Source</th>
+                      <th class="sortable" data-sort="providers">Providers</th>
+                      <th class="sortable" data-sort="pricePerToken">Price</th>
+                      <th class="sortable" data-sort="capacityMsgPerHour">Capacity</th>
+                      <th class="sortable" data-sort="reputation">Rep</th>
+                      <th class="sortable" data-sort="location">Location</th>
+                      <th>Endpoint</th>
+                    </tr>
+                  </thead>
+                  <tbody id="peersBody">
+                    <tr><td colspan="8" class="empty">No peers yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-sessions" class="view" role="tabpanel">
+            <div class="page-header">
+              <h2>Sessions</h2>
+              <div id="sessionsMeta" class="connection-badge badge-idle">0 sessions</div>
+            </div>
+            <p id="sessionsMessage" class="message">Loading session metrics...</p>
+            <div class="panel">
+              <div class="table-wrap">
+                <table class="table">
+                  <thead id="sessionsHead">
+                    <tr>
+                      <th class="sortable" data-sort="sessionId">Session</th>
+                      <th class="sortable" data-sort="provider">Provider</th>
+                      <th class="sortable" data-sort="startedAt">Started</th>
+                      <th class="sortable" data-sort="totalTokens">Tokens</th>
+                      <th class="sortable" data-sort="totalRequests">Requests</th>
+                      <th class="sortable" data-sort="durationMs">Duration</th>
+                      <th class="sortable" data-sort="avgLatencyMs">Latency</th>
+                      <th class="sortable" data-sort="peerSwitches">Switches</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sessionsBody">
+                    <tr><td colspan="8" class="empty">No sessions yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-earnings" class="view" role="tabpanel">
+            <div class="page-header">
+              <h2>Earnings</h2>
+              <div class="page-header-right">
+                <div class="period-toggle">
+                  <button class="toggle-btn" data-period="day">Day</button>
+                  <button class="toggle-btn" data-period="week">Week</button>
+                  <button class="toggle-btn active" data-period="month">Month</button>
+                </div>
+                <div id="earningsMeta" class="connection-badge badge-idle">month</div>
+              </div>
+            </div>
+            <p id="earningsMessage" class="message">Loading earnings...</p>
+
+            <div class="stat-grid">
+              <div class="stat-card"><p class="stat-label">Today</p><p id="earnToday" class="stat-value green">$0.00</p></div>
+              <div class="stat-card"><p class="stat-label">This Week</p><p id="earnWeek" class="stat-value">$0.00</p></div>
+              <div class="stat-card"><p class="stat-label">This Month</p><p id="earnMonth" class="stat-value">$0.00</p></div>
+            </div>
+
+            <div class="panel-grid two-col">
+              <article class="panel">
+                <div class="panel-head"><h3>Earnings Over Time</h3></div>
+                <canvas id="earningsLineChart" width="500" height="220"></canvas>
+              </article>
+              <article class="panel">
+                <div class="panel-head"><h3>By Provider</h3></div>
+                <canvas id="earningsPieChart" width="300" height="220"></canvas>
+              </article>
+            </div>
+          </section>
+
+          <section id="view-connection" class="view" role="tabpanel">
+            <div class="page-header">
+              <h2>Connection</h2>
+              <div id="connectionMeta" class="connection-badge badge-idle">No data</div>
+            </div>
+            <div class="panel-grid two-col">
+              <article class="panel">
+                <div class="panel-head"><h3>Node Status</h3></div>
+                <pre id="connectionStatus">No status data.</pre>
+              </article>
+              <article class="panel">
+                <div class="panel-head"><h3>Network Stats</h3></div>
+                <pre id="connectionNetwork">No network stats.</pre>
+              </article>
+              <article class="panel">
+                <div class="panel-head"><h3>Data Sources</h3></div>
+                <pre id="connectionSources">No data source info.</pre>
+              </article>
+              <article class="panel">
+                <div class="panel-head"><h3>Connection Notes</h3></div>
+                <pre id="connectionNotes">No notes.</pre>
+              </article>
+            </div>
+          </section>
+
+          <section id="view-config" class="view" role="tabpanel">
+            <div class="page-header">
+              <h2>Settings</h2>
+              <div class="page-header-right">
+                <button id="configSaveBtn">Save</button>
+                <div id="configMeta" class="connection-badge badge-idle">Redacted</div>
+              </div>
+            </div>
+            <p id="configMessage" class="message">Loading config...</p>
+
+            <div class="settings-sections">
+              <article class="panel settings-panel">
+                <div class="panel-head"><h3>Seller Settings</h3></div>
+                <div class="form-grid">
+                  <label class="form-label">Reserve Floor (msg/hr)
+                    <input id="cfgReserveFloor" type="number" class="form-input" value="0" />
+                  </label>
+                  <label class="form-label">Price per Token (USD)
+                    <input id="cfgPricePerToken" type="number" class="form-input" step="0.000001" value="0" />
+                  </label>
+                  <label class="form-label">Max Concurrent Buyers
+                    <input id="cfgMaxBuyers" type="number" class="form-input" value="1" />
+                  </label>
+                </div>
+              </article>
+
+              <article class="panel settings-panel">
+                <div class="panel-head"><h3>Buyer Settings</h3></div>
+                <div class="form-grid">
+                  <label class="form-label">Proxy Port
+                    <input id="cfgProxyPort" type="number" class="form-input" value="8080" />
+                  </label>
+                  <label class="form-label">Max Price per Token (USD)
+                    <input id="cfgMaxPrice" type="number" class="form-input" step="0.000001" value="0" />
+                  </label>
+                  <label class="form-label">Min Peer Reputation (0-100)
+                    <input id="cfgMinRep" type="number" class="form-input" min="0" max="100" value="0" />
+                  </label>
+                </div>
+              </article>
+
+              <article class="panel settings-panel">
+                <div class="panel-head"><h3>Payment Settings</h3></div>
+                <div class="form-grid">
+                  <label class="form-label">Preferred Payment Method
+                    <select id="cfgPaymentMethod" class="form-input">
+                      <option value="crypto">Crypto (USDC)</option>
+                    </select>
+                  </label>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section id="view-desktop" class="view" role="tabpanel">
+            <div class="page-header">
+              <h2>Desktop Diagnostics</h2>
+              <div id="desktopMeta" class="connection-badge badge-idle">local state</div>
+            </div>
+
+            <div class="panel-grid two-col">
+              <article class="panel">
+                <div class="panel-head"><h3>Daemon State Snapshot</h3></div>
+                <pre id="daemonState">No daemon state file found yet.</pre>
+              </article>
+              <article class="panel">
+                <div class="panel-head"><h3>Runtime Logs</h3></div>
+                <div id="logs" class="logs" aria-live="polite"></div>
+              </article>
+            </div>
+          </section>
+        </section>
+      </main>
     </div>
 
     <script type="module" src="./app.js"></script>
