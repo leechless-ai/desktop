@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Leechless Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div>
+          <h1>Leechless Desktop</h1>
+          <p class="subtitle">Run seller, buyer proxy, and dashboard without terminal</p>
+        </div>
+        <div class="actions">
+          <button id="refreshBtn">Refresh</button>
+          <button id="clearLogsBtn" class="secondary">Clear Logs</button>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Seller (Seed)</h2>
+          <label>
+            Provider
+            <input id="seedProvider" value="anthropic" />
+          </label>
+          <div class="row">
+            <button id="seedStartBtn">Start</button>
+            <button id="seedStopBtn" class="danger">Stop</button>
+          </div>
+          <p id="seedState" class="state">Unknown</p>
+        </article>
+
+        <article class="card">
+          <h2>Buyer (Connect)</h2>
+          <label>
+            Router
+            <input id="connectRouter" value="claude-code" />
+          </label>
+          <div class="row">
+            <button id="connectStartBtn">Start</button>
+            <button id="connectStopBtn" class="danger">Stop</button>
+          </div>
+          <p id="connectState" class="state">Unknown</p>
+        </article>
+
+        <article class="card">
+          <h2>Dashboard</h2>
+          <label>
+            Port
+            <input id="dashboardPort" type="number" value="3117" />
+          </label>
+          <div class="row">
+            <button id="dashboardStartBtn">Start</button>
+            <button id="dashboardStopBtn" class="danger">Stop</button>
+            <button id="dashboardOpenBtn" class="secondary">Open</button>
+          </div>
+          <p id="dashboardState" class="state">Unknown</p>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2>Daemon State Snapshot</h2>
+        <pre id="daemonState">No daemon state file found yet.</pre>
+      </section>
+
+      <section class="card logs-card">
+        <h2>Runtime Logs</h2>
+        <div id="logs" class="logs" aria-live="polite"></div>
+      </section>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
