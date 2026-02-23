@@ -136,6 +136,9 @@ const api = {
   chatAiSend(conversationId: string, message: string, model?: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, model);
   },
+  chatAiSendStream(conversationId: string, message: string, model?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, model);
+  },
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');
   },
@@ -156,6 +159,47 @@ const api = {
     const listener = (_: unknown, data: { conversationId: string; message: { role: string; content: string } }) => handler(data);
     ipcRenderer.on('chat:ai-user-persisted', listener);
     return () => ipcRenderer.off('chat:ai-user-persisted', listener);
+  },
+  // Streaming events
+  onChatAiStreamStart(handler: (data: { conversationId: string; turn: number }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; turn: number }) => handler(data);
+    ipcRenderer.on('chat:ai-stream-start', listener);
+    return () => ipcRenderer.off('chat:ai-stream-start', listener);
+  },
+  onChatAiStreamDelta(handler: (data: { conversationId: string; index: number; blockType: string; text: string }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; index: number; blockType: string; text: string }) => handler(data);
+    ipcRenderer.on('chat:ai-stream-delta', listener);
+    return () => ipcRenderer.off('chat:ai-stream-delta', listener);
+  },
+  onChatAiStreamBlockStart(handler: (data: { conversationId: string; index: number; blockType: string; toolId?: string; toolName?: string }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; index: number; blockType: string; toolId?: string; toolName?: string }) => handler(data);
+    ipcRenderer.on('chat:ai-stream-block-start', listener);
+    return () => ipcRenderer.off('chat:ai-stream-block-start', listener);
+  },
+  onChatAiStreamBlockStop(handler: (data: { conversationId: string; index: number; blockType: string; toolId?: string; toolName?: string; input?: Record<string, unknown> }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; index: number; blockType: string; toolId?: string; toolName?: string; input?: Record<string, unknown> }) => handler(data);
+    ipcRenderer.on('chat:ai-stream-block-stop', listener);
+    return () => ipcRenderer.off('chat:ai-stream-block-stop', listener);
+  },
+  onChatAiStreamDone(handler: (data: { conversationId: string }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string }) => handler(data);
+    ipcRenderer.on('chat:ai-stream-done', listener);
+    return () => ipcRenderer.off('chat:ai-stream-done', listener);
+  },
+  onChatAiStreamError(handler: (data: { conversationId: string; error: string }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; error: string }) => handler(data);
+    ipcRenderer.on('chat:ai-stream-error', listener);
+    return () => ipcRenderer.off('chat:ai-stream-error', listener);
+  },
+  onChatAiToolExecuting(handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown> }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown> }) => handler(data);
+    ipcRenderer.on('chat:ai-tool-executing', listener);
+    return () => ipcRenderer.off('chat:ai-tool-executing', listener);
+  },
+  onChatAiToolResult(handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => handler(data);
+    ipcRenderer.on('chat:ai-tool-result', listener);
+    return () => ipcRenderer.off('chat:ai-tool-result', listener);
   },
 };
 

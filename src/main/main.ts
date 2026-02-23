@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { readFile, writeFile, readdir, unlink, mkdir } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +17,8 @@ import { WalletConnectManager } from './walletconnect.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const execFileAsync = promisify(execFileCallback);
 
 const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
@@ -745,9 +749,15 @@ ipcMain.handle('wallet:wc-disconnect', async () => {
 
 // ── AI Chat IPC Handlers ──
 
+type TextBlock = { type: 'text'; text: string };
+type ThinkingBlock = { type: 'thinking'; thinking: string };
+type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
+
 type AiChatMessage = {
   role: 'user' | 'assistant';
-  content: string;
+  content: string | ContentBlock[];
 };
 
 type AiConversation = {
@@ -839,6 +849,164 @@ class ChatStorage {
 
 const chatStorage = new ChatStorage(CHAT_HISTORY_DIR);
 let chatAbortController: AbortController | null = null;
+
+const toolDefinitions = [
+  {
+    name: 'bash',
+    description: 'Execute a shell command. Use for running scripts, installing packages, git operations, etc.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        command: { type: 'string', description: 'The bash command to execute' },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'read_file',
+    description: 'Read the contents of a file at the given path.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the file' },
+        limit: { type: 'number', description: 'Max lines to read (default: all)' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'write_file',
+    description: 'Write content to a file. Creates parent directories if needed.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the file' },
+        content: { type: 'string', description: 'Content to write' },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
+    name: 'list_directory',
+    description: 'List files and directories at the given path.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: 'Directory path to list' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'search_files',
+    description: 'Search for files matching a name pattern.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        pattern: { type: 'string', description: 'File name pattern (e.g. "*.ts")' },
+        path: { type: 'string', description: 'Base directory to search in' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'grep',
+    description: 'Search file contents using a regex pattern.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        pattern: { type: 'string', description: 'Regex pattern to search for' },
+        path: { type: 'string', description: 'File or directory to search in' },
+        include: { type: 'string', description: 'File glob to include (e.g. "*.ts")' },
+      },
+      required: ['pattern'],
+    },
+  },
+];
+
+async function executeTool(name: string, input: Record<string, unknown>): Promise<{ output: string; isError: boolean }> {
+  try {
+    switch (name) {
+      case 'bash': {
+        const command = String(input.command ?? '');
+        if (!command) return { output: 'No command provided', isError: true };
+        const timeout = Math.min(Math.max(Number(input.timeout) || 120000, 1000), 120000);
+        const { stdout, stderr } = await execFileAsync('/bin/bash', ['-c', command], {
+          timeout,
+          maxBuffer: 1024 * 1024 * 10,
+          cwd: homedir(),
+        });
+        let result = stdout || '';
+        if (stderr) result += (result ? '\n' : '') + stderr;
+        if (result.length > 30000) result = result.slice(0, 30000) + '\n... (truncated)';
+        return { output: result || '(no output)', isError: false };
+      }
+      case 'read_file': {
+        const filePath = String(input.path ?? '');
+        if (!filePath) return { output: 'No path provided', isError: true };
+        let content = await readFile(filePath, 'utf-8');
+        const limit = Number(input.limit);
+        if (limit > 0) {
+          const lines = content.split('\n');
+          content = lines.slice(0, limit).join('\n');
+        }
+        if (content.length > 30000) content = content.slice(0, 30000) + '\n... (truncated)';
+        return { output: content, isError: false };
+      }
+      case 'write_file': {
+        const filePath = String(input.path ?? '');
+        const content = String(input.content ?? '');
+        if (!filePath) return { output: 'No path provided', isError: true };
+        await mkdir(path.dirname(filePath), { recursive: true });
+        await writeFile(filePath, content, 'utf-8');
+        return { output: `Wrote ${content.length} characters to ${filePath}`, isError: false };
+      }
+      case 'list_directory': {
+        const dirPath = String(input.path ?? '.');
+        const entries = await readdir(dirPath, { withFileTypes: true });
+        const lines = entries.map(e => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`);
+        return { output: lines.join('\n') || '(empty directory)', isError: false };
+      }
+      case 'search_files': {
+        const pattern = String(input.pattern ?? '');
+        const basePath = String(input.path ?? '.');
+        if (!pattern) return { output: 'No pattern provided', isError: true };
+        const { stdout } = await execFileAsync('/usr/bin/find', [basePath, '-name', pattern, '-type', 'f'], {
+          timeout: 10000,
+          maxBuffer: 1024 * 1024,
+        });
+        const result = stdout.trim();
+        if (result.length > 30000) return { output: result.slice(0, 30000) + '\n... (truncated)', isError: false };
+        return { output: result || 'No files found', isError: false };
+      }
+      case 'grep': {
+        const pattern = String(input.pattern ?? '');
+        const searchPath = String(input.path ?? '.');
+        if (!pattern) return { output: 'No pattern provided', isError: true };
+        const args = ['-rn', pattern, searchPath];
+        if (input.include) args.push('--include', String(input.include));
+        try {
+          const { stdout } = await execFileAsync('/usr/bin/grep', args, {
+            timeout: 10000,
+            maxBuffer: 1024 * 1024,
+          });
+          let result = stdout.trim();
+          if (result.length > 30000) result = result.slice(0, 30000) + '\n... (truncated)';
+          return { output: result || 'No matches found', isError: false };
+        } catch (grepErr) {
+          if ((grepErr as { code?: number }).code === 1) {
+            return { output: 'No matches found', isError: false };
+          }
+          throw grepErr;
+        }
+      }
+      default:
+        return { output: `Unknown tool: ${name}`, isError: true };
+    }
+  } catch (err) {
+    return { output: err instanceof Error ? err.message : String(err), isError: true };
+  }
+}
 
 function getProxyPort(): number {
   // Read from loaded config; fallback to 8377
@@ -993,6 +1161,268 @@ ipcMain.handle('chat:ai-abort', async () => {
     chatAbortController = null;
   }
   return { ok: true };
+});
+
+// ── Streaming AI Chat ──
+
+async function streamSingleTurn(conv: AiConversation, conversationId: string, signal: AbortSignal): Promise<ContentBlock[]> {
+  const proxyPort = getProxyPort();
+  const url = `http://127.0.0.1:${proxyPort}/v1/messages`;
+
+  const requestBody = {
+    model: conv.model,
+    max_tokens: 4096,
+    stream: true,
+    tools: toolDefinitions,
+    messages: conv.messages.map(m => ({ role: m.role, content: m.content })),
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(requestBody),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Proxy returned ${response.status}: ${errorText.slice(0, 200)}`);
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+
+  // Fallback: non-streaming response
+  if (!contentType.includes('text/event-stream')) {
+    const result = await response.json() as { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }> };
+    const blocks: ContentBlock[] = [];
+    for (const block of result.content ?? []) {
+      if (block.type === 'text') {
+        blocks.push({ type: 'text', text: block.text ?? '' });
+        mainWindow?.webContents.send('chat:ai-stream-delta', { conversationId, index: 0, blockType: 'text', text: block.text ?? '' });
+      } else if (block.type === 'tool_use') {
+        blocks.push({ type: 'tool_use', id: block.id ?? '', name: block.name ?? '', input: block.input ?? {} });
+      }
+    }
+    return blocks;
+  }
+
+  // Parse SSE stream
+  const blocks: ContentBlock[] = [];
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+
+  const decoder = new TextDecoder();
+  let sseBuffer = '';
+  let currentBlockIndex = -1;
+  let currentBlockType = '';
+  let textAccum = '';
+  let toolJsonAccum = '';
+  let currentToolId = '';
+  let currentToolName = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split('\n');
+    sseBuffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]' || data.length === 0) continue;
+
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(data);
+      } catch {
+        continue;
+      }
+
+      const eventType = String(event.type ?? '');
+
+      switch (eventType) {
+        case 'content_block_start': {
+          const contentBlock = event.content_block as Record<string, unknown> | undefined;
+          const index = Number(event.index ?? 0);
+          currentBlockIndex = index;
+          const blockType = String(contentBlock?.type ?? 'text');
+          currentBlockType = blockType;
+
+          if (blockType === 'text') {
+            textAccum = String(contentBlock?.text ?? '');
+            mainWindow?.webContents.send('chat:ai-stream-block-start', { conversationId, index, blockType: 'text' });
+          } else if (blockType === 'tool_use') {
+            currentToolId = String(contentBlock?.id ?? '');
+            currentToolName = String(contentBlock?.name ?? '');
+            toolJsonAccum = '';
+            mainWindow?.webContents.send('chat:ai-stream-block-start', { conversationId, index, blockType: 'tool_use', toolId: currentToolId, toolName: currentToolName });
+          } else if (blockType === 'thinking') {
+            textAccum = '';
+            mainWindow?.webContents.send('chat:ai-stream-block-start', { conversationId, index, blockType: 'thinking' });
+          }
+          break;
+        }
+
+        case 'content_block_delta': {
+          const delta = event.delta as Record<string, unknown> | undefined;
+          const deltaType = String(delta?.type ?? '');
+
+          if (deltaType === 'text_delta') {
+            const text = String(delta?.text ?? '');
+            textAccum += text;
+            mainWindow?.webContents.send('chat:ai-stream-delta', { conversationId, index: currentBlockIndex, blockType: 'text', text });
+          } else if (deltaType === 'input_json_delta') {
+            const partial = String(delta?.partial_json ?? '');
+            toolJsonAccum += partial;
+          } else if (deltaType === 'thinking_delta') {
+            const thinking = String(delta?.thinking ?? '');
+            textAccum += thinking;
+            mainWindow?.webContents.send('chat:ai-stream-delta', { conversationId, index: currentBlockIndex, blockType: 'thinking', text: thinking });
+          }
+          break;
+        }
+
+        case 'content_block_stop': {
+          if (currentBlockType === 'text') {
+            blocks.push({ type: 'text', text: textAccum });
+            mainWindow?.webContents.send('chat:ai-stream-block-stop', { conversationId, index: currentBlockIndex, blockType: 'text' });
+          } else if (currentBlockType === 'tool_use') {
+            let parsedInput: Record<string, unknown> = {};
+            try { parsedInput = JSON.parse(toolJsonAccum || '{}'); } catch { /* empty */ }
+            blocks.push({ type: 'tool_use', id: currentToolId, name: currentToolName, input: parsedInput });
+            mainWindow?.webContents.send('chat:ai-stream-block-stop', { conversationId, index: currentBlockIndex, blockType: 'tool_use', toolId: currentToolId, toolName: currentToolName, input: parsedInput });
+          } else if (currentBlockType === 'thinking') {
+            blocks.push({ type: 'thinking', thinking: textAccum });
+            mainWindow?.webContents.send('chat:ai-stream-block-stop', { conversationId, index: currentBlockIndex, blockType: 'thinking' });
+          }
+          textAccum = '';
+          toolJsonAccum = '';
+          break;
+        }
+
+        case 'message_stop':
+        case 'message_delta':
+          break;
+      }
+    }
+  }
+
+  return blocks;
+}
+
+async function streamingChatLoop(conv: AiConversation, conversationId: string, signal: AbortSignal): Promise<void> {
+  const MAX_TURNS = 20;
+
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    mainWindow?.webContents.send('chat:ai-stream-start', { conversationId, turn });
+
+    const blocks = await streamSingleTurn(conv, conversationId, signal);
+
+    const toolUseBlocks = blocks.filter(b => b.type === 'tool_use') as ToolUseBlock[];
+
+    if (toolUseBlocks.length === 0) {
+      // Text-only response — save and finish
+      conv.messages.push({ role: 'assistant', content: blocks });
+      conv.updatedAt = Date.now();
+      await chatStorage.save(conv);
+      mainWindow?.webContents.send('chat:ai-stream-done', { conversationId });
+      return;
+    }
+
+    // Save assistant message with tool use blocks
+    conv.messages.push({ role: 'assistant', content: blocks });
+    conv.updatedAt = Date.now();
+    await chatStorage.save(conv);
+
+    // Execute tools and build tool_result blocks
+    const toolResults: ToolResultBlock[] = [];
+    for (const toolBlock of toolUseBlocks) {
+      mainWindow?.webContents.send('chat:ai-tool-executing', {
+        conversationId,
+        toolUseId: toolBlock.id,
+        name: toolBlock.name,
+        input: toolBlock.input,
+      });
+
+      const result = await executeTool(toolBlock.name, toolBlock.input);
+
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: toolBlock.id,
+        content: result.output,
+        is_error: result.isError,
+      });
+
+      mainWindow?.webContents.send('chat:ai-tool-result', {
+        conversationId,
+        toolUseId: toolBlock.id,
+        output: result.output,
+        isError: result.isError,
+      });
+    }
+
+    // Add tool results as user message
+    conv.messages.push({ role: 'user', content: toolResults });
+    conv.updatedAt = Date.now();
+    await chatStorage.save(conv);
+  }
+
+  // Max turns reached
+  mainWindow?.webContents.send('chat:ai-stream-done', { conversationId });
+}
+
+ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, userMessage: string, model?: string) => {
+  if (!userMessage || userMessage.trim().length === 0) {
+    return { ok: false, error: 'Empty message' };
+  }
+
+  if (!isProxyRunning()) {
+    return { ok: false, error: 'Buyer runtime is not running. Start it from Desktop Controls.' };
+  }
+
+  const conv = await chatStorage.get(conversationId);
+  if (!conv) {
+    return { ok: false, error: 'Conversation not found' };
+  }
+
+  // Add user message
+  conv.messages.push({ role: 'user', content: userMessage.trim() });
+  conv.updatedAt = Date.now();
+
+  // Auto-title from first user message
+  if (conv.title === 'New conversation' && conv.messages.filter(m => m.role === 'user').length === 1) {
+    conv.title = userMessage.trim().slice(0, 60) + (userMessage.trim().length > 60 ? '...' : '');
+  }
+
+  if (model) {
+    conv.model = model;
+  }
+
+  await chatStorage.save(conv);
+
+  mainWindow?.webContents.send('chat:ai-user-persisted', { conversationId, message: conv.messages[conv.messages.length - 1] });
+
+  chatAbortController = new AbortController();
+
+  try {
+    await streamingChatLoop(conv, conversationId, chatAbortController.signal);
+    return { ok: true };
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      mainWindow?.webContents.send('chat:ai-stream-error', { conversationId, error: 'Request aborted' });
+      return { ok: false, error: 'Aborted' };
+    }
+    const error = err instanceof Error ? err.message : String(err);
+    mainWindow?.webContents.send('chat:ai-stream-error', { conversationId, error });
+    return { ok: false, error };
+  } finally {
+    chatAbortController = null;
+  }
 });
 
 ipcMain.handle('runtime:scan-network', async (_event, port?: number) => {
