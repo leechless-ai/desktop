@@ -22,6 +22,7 @@ const uiState = {
   chatConversations: [],
   chatMessages: [],
   chatSending: false,
+  appMode: 'seeder',
 };
 
 function byId(id) {
@@ -368,11 +369,51 @@ function getActiveView() {
   return 'overview';
 }
 
+function setAppMode(mode) {
+  uiState.appMode = mode;
+  try { localStorage.setItem('leechless-app-mode', mode); } catch {}
+
+  // Update mode switcher button states
+  const modeButtons = document.querySelectorAll('.mode-btn[data-appmode]');
+  for (const btn of modeButtons) {
+    btn.classList.toggle('active', btn.dataset.appmode === mode);
+  }
+
+  // Show/hide elements with data-mode matching app modes (seeder/connect/both)
+  const modeElements = document.querySelectorAll('[data-mode="seeder"], [data-mode="connect"], [data-mode="both"]');
+  for (const el of modeElements) {
+    const elMode = el.getAttribute('data-mode');
+    if (elMode === 'both' || elMode === mode) {
+      el.classList.remove('mode-hidden');
+    } else {
+      el.classList.add('mode-hidden');
+    }
+  }
+
+  // If the current active view is hidden, redirect to overview
+  const activeView = getActiveView();
+  const activeNavItem = document.querySelector(`.sidebar-nav li[data-mode] .sidebar-btn[data-view="${activeView}"]`);
+  if (activeNavItem) {
+    const parentLi = activeNavItem.closest('li[data-mode]');
+    if (parentLi && parentLi.classList.contains('mode-hidden')) {
+      setActiveView('overview');
+    }
+  }
+}
+
 function initNavigation() {
   for (const button of navButtons) {
     button.addEventListener('click', () => {
       const targetView = button.dataset.view || 'overview';
       setActiveView(targetView);
+    });
+  }
+
+  // Wire mode switcher buttons
+  const modeButtons = document.querySelectorAll('.mode-btn[data-appmode]');
+  for (const btn of modeButtons) {
+    btn.addEventListener('click', () => {
+      setAppMode(btn.dataset.appmode);
     });
   }
 }
@@ -2350,6 +2391,11 @@ function initPeriodToggle() {
 
 initNavigation();
 setActiveView('overview');
+
+// Restore persisted app mode
+const savedMode = (() => { try { return localStorage.getItem('leechless-app-mode'); } catch { return null; } })();
+setAppMode(savedMode === 'connect' ? 'connect' : 'seeder');
+
 bindControls();
 initSortableHeaders();
 initPeriodToggle();

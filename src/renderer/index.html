@@ -15,25 +15,29 @@
           </div>
           <p class="sidebar-version">Desktop Runtime Console</p>
           <p id="runtimeSummary" class="sidebar-status">No active services</p>
+          <div class="mode-switcher">
+            <button id="modeSwitchSeeder" class="mode-btn active" data-appmode="seeder">Seeder</button>
+            <button id="modeSwitchConnect" class="mode-btn" data-appmode="connect">Connect</button>
+          </div>
         </div>
 
         <ul class="sidebar-nav" role="tablist" aria-label="Dashboard Views">
-          <li><button class="sidebar-btn active" data-view="overview" role="tab">Overview</button></li>
-          <li><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
-          <li><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
-          <li><button class="sidebar-btn" data-view="earnings" role="tab">Earnings</button></li>
-          <li><button class="sidebar-btn" data-view="wallet" role="tab">Wallet</button></li>
-          <li><button class="sidebar-btn" data-view="chat" role="tab">Chat</button></li>
-          <li><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
-          <li><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
-          <li><button class="sidebar-btn" data-view="desktop" role="tab">Desktop</button></li>
+          <li data-mode="both"><button class="sidebar-btn active" data-view="overview" role="tab">Overview</button></li>
+          <li data-mode="both"><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
+          <li data-mode="seeder"><button class="sidebar-btn" data-view="earnings" role="tab">Earnings</button></li>
+          <li data-mode="both"><button class="sidebar-btn" data-view="wallet" role="tab">Wallet</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="chat" role="tab">Chat</button></li>
+          <li data-mode="both"><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
+          <li data-mode="both"><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
+          <li data-mode="both"><button class="sidebar-btn" data-view="desktop" role="tab">Desktop</button></li>
         </ul>
 
         <div class="sidebar-footer">
           <div class="runtime-chip-wrap">
-            <span class="runtime-chip">Seller <strong id="seedBadge">Stopped</strong></span>
-            <span class="runtime-chip">Buyer <strong id="connectBadge">Stopped</strong></span>
-            <span class="runtime-chip">Dash <strong id="dashboardBadge">Stopped</strong></span>
+            <span class="runtime-chip" data-mode="seeder">Seller <strong id="seedBadge">Stopped</strong></span>
+            <span class="runtime-chip" data-mode="connect">Buyer <strong id="connectBadge">Stopped</strong></span>
+            <span class="runtime-chip" data-mode="both">Dash <strong id="dashboardBadge">Stopped</strong></span>
           </div>
         </div>
       </aside>
@@ -52,7 +56,7 @@
           </div>
 
           <div class="runtime-grid">
-            <article class="control-card">
+            <article class="control-card" data-mode="seeder">
               <h3>Seller Runtime</h3>
               <label>Provider<input id="seedProvider" value="anthropic" /></label>
               <div class="row">
@@ -62,7 +66,7 @@
               <p id="seedState" class="state status-stopped">Unknown</p>
             </article>
 
-            <article class="control-card">
+            <article class="control-card" data-mode="connect">
               <h3>Buyer Runtime</h3>
               <label>Router<input id="connectRouter" value="claude-code" /></label>
               <div class="row">
@@ -72,7 +76,7 @@
               <p id="connectState" class="state status-stopped">Unknown</p>
             </article>
 
-            <article class="control-card">
+            <article class="control-card" data-mode="both">
               <h3>Dashboard Engine</h3>
               <label>Port<input id="dashboardPort" type="number" value="3117" /></label>
               <div class="row">
@@ -100,11 +104,11 @@
                 <p class="stat-label">Active Peers</p>
                 <p id="ovPeers" class="stat-value">0</p>
               </div>
-              <div id="ovSessionsCard" class="stat-card">
+              <div id="ovSessionsCard" class="stat-card" data-mode="connect">
                 <p class="stat-label">Active Sessions</p>
                 <p id="ovSessions" class="stat-value">0</p>
               </div>
-              <div class="stat-card">
+              <div class="stat-card" data-mode="seeder">
                 <p class="stat-label">Earnings Today</p>
                 <p id="ovEarnings" class="stat-value">$0.00</p>
               </div>
