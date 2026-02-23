@@ -90,7 +90,9 @@ export function initRuntimeModule({
   }
 
   function renderRuntimeSummary(processes) {
-    const running = processes.filter((proc) => proc.running).map((proc) => proc.mode);
+    const running = processes
+      .filter((proc) => proc.running && proc.mode !== 'dashboard')
+      .map((proc) => proc.mode);
     if (running.length === 0) {
       setText(elements.runtimeSummary, 'No active services');
       return;

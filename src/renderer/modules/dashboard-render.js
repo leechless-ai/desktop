@@ -74,7 +74,8 @@ export function initDashboardRenderModule({
         host: safeString(peer.host, ''),
         port: safeNumber(peer.port, 0),
         providers: safeArray(peer.providers),
-        pricePerToken: safeNumber(peer.pricePerToken, 0),
+        inputUsdPerMillion: safeNumber(peer.inputUsdPerMillion, 0),
+        outputUsdPerMillion: safeNumber(peer.outputUsdPerMillion, 0),
         capacityMsgPerHour: safeNumber(peer.capacityMsgPerHour, 0),
         reputation: safeNumber(peer.reputation, 0),
         lastSeen: safeNumber(peer.lastSeen, 0),
@@ -92,7 +93,8 @@ export function initDashboardRenderModule({
         host: '',
         port: 0,
         providers: [],
-        pricePerToken: 0,
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
         capacityMsgPerHour: 0,
         reputation: 0,
         lastSeen: 0,
@@ -105,8 +107,12 @@ export function initDashboardRenderModule({
         existing.providers = providers;
       }
 
-      if (safeNumber(peer.pricePerToken, 0) > 0) {
-        existing.pricePerToken = safeNumber(peer.pricePerToken, 0);
+      if (safeNumber(peer.inputUsdPerMillion, 0) > 0) {
+        existing.inputUsdPerMillion = safeNumber(peer.inputUsdPerMillion, 0);
+      }
+
+      if (safeNumber(peer.outputUsdPerMillion, 0) > 0) {
+        existing.outputUsdPerMillion = safeNumber(peer.outputUsdPerMillion, 0);
       }
 
       if (safeNumber(peer.capacityMsgPerHour, 0) > 0) {
@@ -405,7 +411,8 @@ export function initDashboardRenderModule({
         peer.peerId,
         safeString(peer.source, ''),
         peer.providers.join(' '),
-        formatPrice(peer.pricePerToken),
+        formatPrice(peer.inputUsdPerMillion),
+        formatPrice(peer.outputUsdPerMillion),
         String(peer.capacityMsgPerHour),
         String(peer.reputation),
         safeString(peer.location, ''),
@@ -425,7 +432,7 @@ export function initDashboardRenderModule({
 
     elements.peersBody.innerHTML = '';
     if (sorted.length === 0) {
-      elements.peersBody.appendChild(buildEmptyRow(8, peers.length > 0 ? 'No peers match filter.' : 'No peers discovered yet.'));
+      elements.peersBody.appendChild(buildEmptyRow(9, peers.length > 0 ? 'No peers match filter.' : 'No peers discovered yet.'));
       return;
     }
 
@@ -442,8 +449,11 @@ export function initDashboardRenderModule({
       const providers = document.createElement('td');
       providers.textContent = peer.providers.length > 0 ? peer.providers.join(', ') : 'n/a';
 
-      const price = document.createElement('td');
-      price.textContent = formatPrice(peer.pricePerToken);
+      const inputPrice = document.createElement('td');
+      inputPrice.textContent = formatPrice(peer.inputUsdPerMillion);
+
+      const outputPrice = document.createElement('td');
+      outputPrice.textContent = formatPrice(peer.outputUsdPerMillion);
 
       const capacity = document.createElement('td');
       capacity.textContent = peer.capacityMsgPerHour > 0 ? `${formatInt(peer.capacityMsgPerHour)}/h` : 'n/a';
@@ -457,7 +467,7 @@ export function initDashboardRenderModule({
       const endpoint = document.createElement('td');
       endpoint.textContent = formatEndpoint(peer);
 
-      row.append(peerId, source, providers, price, capacity, reputation, location, endpoint);
+      row.append(peerId, source, providers, inputPrice, outputPrice, capacity, reputation, location, endpoint);
       elements.peersBody.appendChild(row);
     }
   }

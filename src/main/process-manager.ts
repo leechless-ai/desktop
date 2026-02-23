@@ -34,6 +34,9 @@ const CLI_COMMAND_ENV = 'LEECHLESS_CLI_BIN';
 const CLI_NODE_BIN_ENV = 'LEECHLESS_NODE_BIN';
 const LOCAL_CLI_BIN_RELATIVE = ['..', 'cli', 'dist', 'cli', 'index.js'] as const;
 const RUNTIME_NATIVE_SCRIPT_RELATIVE = ['scripts', 'ensure-runtime-native-modules.mjs'] as const;
+const DESKTOP_DATA_ROOT = join(homedir(), '.leechless-desktop');
+const DESKTOP_SEED_DATA_DIR = join(DESKTOP_DATA_ROOT, 'seed');
+const DESKTOP_CONNECT_DATA_DIR = join(DESKTOP_DATA_ROOT, 'connect');
 
 function resolveCliCommand(): string {
   const envCommand = process.env[CLI_COMMAND_ENV]?.trim();
@@ -160,9 +163,11 @@ function resolveCommandArgs(opts: StartOptions): string[] {
 
   switch (opts.mode) {
     case 'seed':
+      args.push('--data-dir', DESKTOP_SEED_DATA_DIR);
       args.push('seed', '--provider', opts.provider ?? 'anthropic');
       break;
     case 'connect':
+      args.push('--data-dir', DESKTOP_CONNECT_DATA_DIR);
       args.push('connect', '--router', opts.router ?? 'claude-code');
       break;
     case 'dashboard':

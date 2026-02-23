@@ -113,24 +113,17 @@ export function initDashboardApiModule({
     refreshHooks = hooks;
   }
 
-  async function refreshDashboardData(processes) {
+  async function refreshDashboardData(_processes) {
     if (!refreshHooks) {
       return;
     }
 
     const {
-      isModeRunning,
-      renderOfflineState,
       renderDashboardData,
       refreshWalletInfo,
       refreshChatConversations,
       refreshChatProxyStatus,
     } = refreshHooks;
-
-    if (!isModeRunning('dashboard', processes)) {
-      renderOfflineState('Dashboard engine is offline. Start or restart it from Desktop Controls.');
-      return;
-    }
 
     const [
       network,

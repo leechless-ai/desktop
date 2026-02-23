@@ -19,7 +19,8 @@ type NetworkPeer = {
   host: string;
   port: number;
   providers: string[];
-  pricePerToken: number;
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
   capacityMsgPerHour: number;
   reputation: number;
   lastSeen: number;

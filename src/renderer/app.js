@@ -182,12 +182,10 @@ function formatPrice(value) {
   if (numeric <= 0) {
     return 'n/a';
   }
-
-  if (numeric < 0.000001) {
-    return `$${numeric.toExponential(1)}`;
+  if (numeric < 0.01) {
+    return `$${numeric.toFixed(4)}`;
   }
-
-  return `$${numeric.toFixed(6)}`;
+  return `$${numeric.toFixed(2)}`;
 }
 
 function formatLatency(value) {
@@ -220,17 +218,14 @@ function formatEndpoint(peer) {
 const elements = {
   seedState: byId('seedState'),
   connectState: byId('connectState'),
-  dashboardState: byId('dashboardState'),
   seedBadge: byId('seedBadge'),
   connectBadge: byId('connectBadge'),
-  dashboardBadge: byId('dashboardBadge'),
   runtimeSummary: byId('runtimeSummary'),
   daemonState: byId('daemonState'),
   logs: byId('logs'),
 
   seedProvider: byId('seedProvider'),
   connectRouter: byId('connectRouter'),
-  dashboardPort: byId('dashboardPort'),
 
   overviewBadge: byId('overviewBadge'),
   ovNodeState: byId('ovNodeState'),
@@ -310,6 +305,7 @@ const elements = {
   chatInput: byId('chatInput'),
   chatSendBtn: byId('chatSendBtn'),
   chatAbortBtn: byId('chatAbortBtn'),
+  chatError: byId('chatError'),
   chatStreamingIndicator: byId('chatStreamingIndicator'),
 
   connectionMeta: byId('connectionMeta'),
@@ -322,10 +318,13 @@ const elements = {
   configMessage: byId('configMessage'),
   configSaveBtn: byId('configSaveBtn'),
   cfgReserveFloor: byId('cfgReserveFloor'),
-  cfgPricePerToken: byId('cfgPricePerToken'),
+  cfgSellerInputUsdPerMillion: byId('cfgSellerInputUsdPerMillion'),
+  cfgSellerOutputUsdPerMillion: byId('cfgSellerOutputUsdPerMillion'),
   cfgMaxBuyers: byId('cfgMaxBuyers'),
   cfgProxyPort: byId('cfgProxyPort'),
-  cfgMaxPrice: byId('cfgMaxPrice'),
+  cfgPreferredProviders: byId('cfgPreferredProviders'),
+  cfgBuyerMaxInputUsdPerMillion: byId('cfgBuyerMaxInputUsdPerMillion'),
+  cfgBuyerMaxOutputUsdPerMillion: byId('cfgBuyerMaxOutputUsdPerMillion'),
   cfgMinRep: byId('cfgMinRep'),
   cfgPaymentMethod: byId('cfgPaymentMethod'),
 };
@@ -359,7 +358,6 @@ function setBadgeTone(el, tone, label) {
 const {
   appendLog,
   renderLogs,
-  processByMode,
   isModeRunning,
   renderProcesses,
   renderDaemonState,
@@ -428,6 +426,31 @@ function bindAction(buttonId, action, options = { refreshAfter: true }) {
   });
 }
 
+async function waitForSeederReady(timeoutMs = 12000) {
+  if (!bridge?.getState) {
+    return false;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const snapshot = await bridge.getState();
+      const daemon = safeObject(snapshot?.daemonState);
+      const daemonState = safeObject(daemon?.state);
+      const mode = safeString(daemonState?.state, '');
+      if (mode === 'seeding') {
+        return true;
+      }
+    } catch {
+      // Ignore transient bridge polling errors while waiting.
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 450));
+  }
+
+  return false;
+}
+
 function bindControls() {
   bindAction('seedStartBtn', async () => {
     await bridge.start({
@@ -441,6 +464,12 @@ function bindControls() {
   });
 
   bindAction('connectStartBtn', async () => {
+    if (isModeRunning('seed')) {
+      const ready = await waitForSeederReady(10000);
+      if (!ready) {
+        appendSystemLog('Seeder is still warming up; buyer may not discover the local seller immediately.');
+      }
+    }
     await bridge.start({
       mode: 'connect',
       router: safeString(elements.connectRouter?.value, 'claude-code').trim() || 'claude-code',
@@ -451,18 +480,6 @@ function bindControls() {
     await bridge.stop('connect');
   });
 
-  bindAction('dashboardRestartBtn', async () => {
-    await bridge.stop('dashboard');
-    await bridge.start({
-      mode: 'dashboard',
-      dashboardPort: getDashboardPort(),
-    });
-  });
-
-  bindAction('dashboardOpenBtn', async () => {
-    await bridge.openDashboard(getDashboardPort());
-  }, { refreshAfter: false });
-
   bindAction('refreshBtn', refreshAll);
 
   bindAction('clearLogsBtn', async () => {
@@ -470,15 +487,22 @@ function bindControls() {
   });
 
   bindAction('startAllBtn', async () => {
-    if (!isModeRunning('dashboard')) {
-      await bridge.start({ mode: 'dashboard', dashboardPort: getDashboardPort() });
-    }
+    let startedSeed = false;
     if (!isModeRunning('seed')) {
       await bridge.start({
         mode: 'seed',
         provider: safeString(elements.seedProvider?.value, 'anthropic').trim() || 'anthropic',
       });
+      startedSeed = true;
     }
+
+    if (startedSeed) {
+      const ready = await waitForSeederReady(12000);
+      if (!ready) {
+        appendSystemLog('Seeder startup is taking longer than expected; buyer may not discover it immediately.');
+      }
+    }
+
     if (!isModeRunning('connect')) {
       await bridge.start({
         mode: 'connect',
@@ -493,9 +517,6 @@ function bindControls() {
     }
     if (isModeRunning('seed')) {
       await bridge.stop('seed');
-    }
-    if (isModeRunning('dashboard')) {
-      await bridge.stop('dashboard');
     }
   });
 
@@ -532,18 +553,25 @@ function initializeBridge() {
     }
   });
 
+  if (bridge.start) {
+    void bridge.start({
+      mode: 'dashboard',
+      dashboardPort: getDashboardPort(),
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      const normalized = message.toLowerCase();
+      if (normalized.includes('eaddrinuse') || normalized.includes('address already in use')) {
+        appendSystemLog('Local data service port already in use; reusing the existing service.');
+        return;
+      }
+      appendSystemLog(`Background data service start failed: ${message}`);
+    });
+  }
+
   void refreshAll();
   setInterval(() => {
     void refreshAll();
   }, POLL_INTERVAL_MS);
-}
-
-if (elements.dashboardPort) {
-  elements.dashboardPort.addEventListener('change', () => {
-    if (isModeRunning('dashboard')) {
-      appendSystemLog('Dashboard port updated. Click Restart to move the embedded dashboard engine.');
-    }
-  });
 }
 
 if (elements.ovSessionsCard) {
@@ -621,6 +649,7 @@ setRefreshHooks({
   refreshWalletInfo,
   refreshChatConversations,
   refreshChatProxyStatus,
+  appendSystemLog,
 });
 
 function initPeriodToggle() {

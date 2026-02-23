@@ -20,6 +20,31 @@ export function initChatModule({
     return div.innerHTML;
   }
 
+  function toErrorMessage(err, fallback = 'Unexpected error') {
+    if (typeof err === 'string' && err.trim().length > 0) {
+      return err;
+    }
+    if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message.trim().length > 0) {
+      return err.message;
+    }
+    return fallback;
+  }
+
+  function showChatError(message) {
+    const text = toErrorMessage(message, 'Unexpected chat error');
+    if (elements.chatError) {
+      elements.chatError.textContent = text;
+      elements.chatError.style.display = '';
+    }
+  }
+
+  function clearChatError() {
+    if (elements.chatError) {
+      elements.chatError.textContent = '';
+      elements.chatError.style.display = 'none';
+    }
+  }
+
   function scrollChatToBottom() {
     const container = elements.chatMessages;
     if (!container) return;
@@ -204,9 +229,16 @@ export function initChatModule({
 
         renderChatMessages();
         renderChatConversations();
+        clearChatError();
+      } else {
+        const message = toErrorMessage(result.error, 'Failed to open conversation');
+        showChatError(message);
+        appendSystemLog(`Chat error: ${message}`);
       }
-    } catch {
-      // Conversation load failed
+    } catch (err) {
+      const message = toErrorMessage(err, 'Failed to open conversation');
+      showChatError(message);
+      appendSystemLog(`Chat error: ${message}`);
     }
   }
 
@@ -261,9 +293,16 @@ export function initChatModule({
       if (result.ok && result.data) {
         await refreshChatConversations();
         await openConversation(result.data.id);
+        clearChatError();
+      } else {
+        const message = toErrorMessage(result.error, 'Failed to create conversation');
+        showChatError(message);
+        appendSystemLog(`Chat error: ${message}`);
       }
     } catch (err) {
-      appendSystemLog(`Failed to create conversation: ${err}`);
+      const message = toErrorMessage(err, 'Failed to create conversation');
+      showChatError(message);
+      appendSystemLog(`Chat error: ${message}`);
     }
   }
 
@@ -288,8 +327,11 @@ export function initChatModule({
 
       renderChatMessages();
       await refreshChatConversations();
+      clearChatError();
     } catch (err) {
-      appendSystemLog(`Failed to delete conversation: ${err}`);
+      const message = toErrorMessage(err, 'Failed to delete conversation');
+      showChatError(message);
+      appendSystemLog(`Chat error: ${message}`);
     }
   }
 
@@ -318,6 +360,7 @@ export function initChatModule({
     uiState.chatMessages.push({ role: 'user', content });
     renderChatMessages();
 
+    clearChatError();
     setChatSending(true);
 
     try {
@@ -325,17 +368,24 @@ export function initChatModule({
       if (bridge.chatAiSendStream) {
         const result = await bridge.chatAiSendStream(convId, content, model);
         if (!result.ok) {
-          appendSystemLog(`Chat error: ${result.error}`);
+          const message = toErrorMessage(result.error, 'Request failed');
+          showChatError(message);
+          appendSystemLog(`Chat error: ${message}`);
+          setChatSending(false);
         }
       } else if (bridge.chatAiSend) {
         const result = await bridge.chatAiSend(convId, content, model);
         if (!result.ok) {
-          appendSystemLog(`Chat error: ${result.error}`);
+          const message = toErrorMessage(result.error, 'Request failed');
+          showChatError(message);
+          appendSystemLog(`Chat error: ${message}`);
         }
         setChatSending(false);
       }
     } catch (err) {
-      appendSystemLog(`Chat send failed: ${err}`);
+      const message = toErrorMessage(err, 'Chat send failed');
+      showChatError(message);
+      appendSystemLog(`Chat error: ${message}`);
       setChatSending(false);
     }
   }
@@ -392,6 +442,7 @@ export function initChatModule({
           uiState.chatMessages.push(data.message);
           renderChatMessages();
           setChatSending(false);
+          clearChatError();
         }
         void refreshChatConversations();
       });
@@ -402,6 +453,7 @@ export function initChatModule({
         if (data.conversationId === uiState.chatActiveConversation) {
           setChatSending(false);
           if (data.error !== 'Request aborted') {
+            showChatError(data.error);
             appendSystemLog(`AI Chat error: ${data.error}`);
           }
         }
@@ -415,6 +467,7 @@ export function initChatModule({
     if (bridge.onChatAiStreamStart) {
       bridge.onChatAiStreamStart((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
+        clearChatError();
         streamingTextBuffer = '';
         streamingThinkingBuffer = '';
 
@@ -559,6 +612,7 @@ export function initChatModule({
         streamingTextBuffer = '';
         streamingThinkingBuffer = '';
         setChatSending(false);
+        clearChatError();
 
         void openConversation(data.conversationId);
         void refreshChatConversations();
@@ -575,6 +629,7 @@ export function initChatModule({
         setChatSending(false);
 
         if (data.error !== 'Request aborted') {
+          showChatError(data.error);
           appendSystemLog(`AI Chat error: ${data.error}`);
         }
       });

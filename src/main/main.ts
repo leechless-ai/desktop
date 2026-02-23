@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createConnection } from 'node:net';
 import { createDashboardServer, type DashboardConfig, type DashboardServer } from '../../../dashboard/dist/index.js';
 import {
   ProcessManager,
@@ -35,7 +36,8 @@ type DashboardNetworkPeer = {
   host: string;
   port: number;
   providers: string[];
-  pricePerToken: number;
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
   capacityMsgPerHour: number;
   reputation: number;
   lastSeen: number;
@@ -87,6 +89,7 @@ type DashboardRuntimeState = {
 
 const DEFAULT_DASHBOARD_PORT = 3117;
 const DEFAULT_CONFIG_PATH = path.join(homedir(), '.leechless', 'config.json');
+const ACTIVE_CONFIG_PATH = process.env['LEECHLESS_CONFIG_PATH']?.trim() || DEFAULT_CONFIG_PATH;
 
 const DASHBOARD_ENDPOINTS: ReadonlySet<DashboardEndpoint> = new Set([
   'status',
@@ -116,6 +119,11 @@ function toSafeDashboardPort(port?: number): number {
     return Math.floor(parsed);
   }
   return DEFAULT_DASHBOARD_PORT;
+}
+
+function isAddressInUseError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes('eaddrinuse') || normalized.includes('address already in use');
 }
 
 function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string): void {
@@ -189,11 +197,21 @@ function defaultDashboardConfig(): DashboardConfig {
       reserveFloor: 10,
       maxConcurrentBuyers: 5,
       enabledProviders: [],
-      pricePerToken: 0.00001,
+      pricing: {
+        defaults: {
+          inputUsdPerMillion: 10,
+          outputUsdPerMillion: 10,
+        },
+      },
     },
     buyer: {
       preferredProviders: ['anthropic', 'openai'],
-      maxPricePerToken: 0.0001,
+      maxPricing: {
+        defaults: {
+          inputUsdPerMillion: 100,
+          outputUsdPerMillion: 100,
+        },
+      },
       minPeerReputation: 50,
       proxyPort: 8377,
     },
@@ -224,6 +242,10 @@ async function loadDashboardConfig(configPath = DEFAULT_CONFIG_PATH): Promise<Da
   const identity = asRecord(root.identity);
   const seller = asRecord(root.seller);
   const buyer = asRecord(root.buyer);
+  const sellerPricing = asRecord(seller.pricing);
+  const sellerPricingDefaults = asRecord(sellerPricing.defaults);
+  const buyerMaxPricing = asRecord(buyer.maxPricing);
+  const buyerMaxPricingDefaults = asRecord(buyerMaxPricing.defaults);
   const network = asRecord(root.network);
   const payments = asRecord(root.payments);
 
@@ -246,11 +268,39 @@ async function loadDashboardConfig(configPath = DEFAULT_CONFIG_PATH): Promise<Da
       reserveFloor: asNumber(seller.reserveFloor, defaults.seller.reserveFloor),
       maxConcurrentBuyers: asNumber(seller.maxConcurrentBuyers, defaults.seller.maxConcurrentBuyers),
       enabledProviders: asStringArray(seller.enabledProviders, defaults.seller.enabledProviders),
-      pricePerToken: asNumber(seller.pricePerToken, defaults.seller.pricePerToken),
+      pricing: {
+        defaults: {
+          inputUsdPerMillion: asNumber(
+            sellerPricingDefaults.inputUsdPerMillion,
+            defaults.seller.pricing.defaults.inputUsdPerMillion
+          ),
+          outputUsdPerMillion: asNumber(
+            sellerPricingDefaults.outputUsdPerMillion,
+            defaults.seller.pricing.defaults.outputUsdPerMillion
+          ),
+        },
+        providers: sellerPricing.providers && typeof sellerPricing.providers === 'object'
+          ? sellerPricing.providers as DashboardConfig['seller']['pricing']['providers']
+          : defaults.seller.pricing.providers,
+      },
     },
     buyer: {
       preferredProviders: asStringArray(buyer.preferredProviders, defaults.buyer.preferredProviders),
-      maxPricePerToken: asNumber(buyer.maxPricePerToken, defaults.buyer.maxPricePerToken),
+      maxPricing: {
+        defaults: {
+          inputUsdPerMillion: asNumber(
+            buyerMaxPricingDefaults.inputUsdPerMillion,
+            defaults.buyer.maxPricing.defaults.inputUsdPerMillion
+          ),
+          outputUsdPerMillion: asNumber(
+            buyerMaxPricingDefaults.outputUsdPerMillion,
+            defaults.buyer.maxPricing.defaults.outputUsdPerMillion
+          ),
+        },
+        providers: buyerMaxPricing.providers && typeof buyerMaxPricing.providers === 'object'
+          ? buyerMaxPricing.providers as DashboardConfig['buyer']['maxPricing']['providers']
+          : defaults.buyer.maxPricing.providers,
+      },
       minPeerReputation: asNumber(buyer.minPeerReputation, defaults.buyer.minPeerReputation),
       proxyPort: asNumber(buyer.proxyPort, defaults.buyer.proxyPort),
     },
@@ -281,8 +331,8 @@ async function startDashboardRuntime(port?: number): Promise<void> {
   dashboardRuntime.lastError = null;
 
   try {
-    const config = await loadDashboardConfig();
-    dashboardServer = await createDashboardServer(config, targetPort);
+    const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
+    dashboardServer = await createDashboardServer(config, targetPort, { configPath: ACTIVE_CONFIG_PATH });
     await dashboardServer.start();
 
     dashboardRuntime.running = true;
@@ -336,7 +386,7 @@ function createWindow(): void {
     minWidth: 980,
     minHeight: 700,
     title: 'Leechless Desktop',
-    backgroundColor: '#0b0e17',
+    backgroundColor: '#080c12',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -549,7 +599,21 @@ async function ensureDashboardRuntime(targetPort?: number): Promise<void> {
   }
 
   const desiredPort = toSafeDashboardPort(targetPort ?? dashboardRuntime.port);
-  await startDashboardRuntime(desiredPort);
+  const lastError = dashboardRuntime.lastError ?? '';
+  if (isAddressInUseError(lastError) && dashboardRuntime.port === desiredPort) {
+    return;
+  }
+
+  try {
+    await startDashboardRuntime(desiredPort);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isAddressInUseError(message)) {
+      appendLog('dashboard', 'system', `Dashboard port ${desiredPort} already in use; using existing local data service.`);
+      return;
+    }
+    throw err;
+  }
 }
 
 ipcMain.handle('runtime:get-state', async () => {
@@ -562,7 +626,15 @@ ipcMain.handle('runtime:get-state', async () => {
 
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
   if (options.mode === 'dashboard') {
-    await startDashboardRuntime(options.dashboardPort);
+    try {
+      await startDashboardRuntime(options.dashboardPort);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!isAddressInUseError(message)) {
+        throw err;
+      }
+      appendLog('dashboard', 'system', 'Dashboard port already in use; reusing existing local data service.');
+    }
     return {
       state: getDashboardProcessState(),
       processes: getCombinedProcessState(),
@@ -1009,12 +1081,49 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 }
 
 function getProxyPort(): number {
-  // Read from loaded config; fallback to 8377
   return 8377;
 }
 
 function isProxyRunning(): boolean {
   return isModeRunning('connect', getCombinedProcessState());
+}
+
+async function resolveProxyPort(): Promise<number> {
+  try {
+    const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
+    const configured = Number(config.buyer?.proxyPort);
+    if (Number.isFinite(configured) && configured > 0 && configured <= 65535) {
+      return Math.floor(configured);
+    }
+  } catch {
+    // fall back
+  }
+  return getProxyPort();
+}
+
+async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port: Math.floor(port) });
+
+    let settled = false;
+    const finalize = (reachable: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(reachable);
+    };
+
+    socket.once('connect', () => finalize(true));
+    socket.once('error', () => finalize(false));
+    socket.setTimeout(timeoutMs, () => finalize(false));
+  });
+}
+
+async function isProxyAvailable(port: number): Promise<boolean> {
+  if (isProxyRunning()) {
+    return true;
+  }
+  return isPortReachable(port);
 }
 
 function isModeRunning(mode: string, processes: RuntimeProcessState[]): boolean {
@@ -1023,11 +1132,13 @@ function isModeRunning(mode: string, processes: RuntimeProcessState[]): boolean 
 }
 
 ipcMain.handle('chat:ai-get-proxy-status', async () => {
+  const port = await resolveProxyPort();
+  const running = await isProxyAvailable(port);
   return {
     ok: true,
     data: {
-      running: isProxyRunning(),
-      port: getProxyPort(),
+      running,
+      port,
     },
   };
 });
@@ -1068,8 +1179,9 @@ ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessag
     return { ok: false, error: 'Empty message' };
   }
 
-  if (!isProxyRunning()) {
-    return { ok: false, error: 'Buyer runtime is not running. Start it from Desktop Controls.' };
+  const proxyPort = await resolveProxyPort();
+  if (!(await isProxyAvailable(proxyPort))) {
+    return { ok: false, error: `Buyer proxy is not reachable on port ${proxyPort}. Start Buyer runtime or fix buyer.proxyPort in config.` };
   }
 
   const conv = await chatStorage.get(conversationId);
@@ -1095,7 +1207,6 @@ ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessag
   // Notify renderer that user message is persisted
   mainWindow?.webContents.send('chat:ai-user-persisted', { conversationId, message: conv.messages[conv.messages.length - 1] });
 
-  const proxyPort = getProxyPort();
   const url = `http://127.0.0.1:${proxyPort}/v1/messages`;
 
   const requestBody = {
@@ -1166,7 +1277,7 @@ ipcMain.handle('chat:ai-abort', async () => {
 // ── Streaming AI Chat ──
 
 async function streamSingleTurn(conv: AiConversation, conversationId: string, signal: AbortSignal): Promise<ContentBlock[]> {
-  const proxyPort = getProxyPort();
+  const proxyPort = await resolveProxyPort();
   const url = `http://127.0.0.1:${proxyPort}/v1/messages`;
 
   const requestBody = {
@@ -1381,8 +1492,9 @@ ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, use
     return { ok: false, error: 'Empty message' };
   }
 
-  if (!isProxyRunning()) {
-    return { ok: false, error: 'Buyer runtime is not running. Start it from Desktop Controls.' };
+  const proxyPort = await resolveProxyPort();
+  if (!(await isProxyAvailable(proxyPort))) {
+    return { ok: false, error: `Buyer proxy is not reachable on port ${proxyPort}. Start Buyer runtime or fix buyer.proxyPort in config.` };
   }
 
   const conv = await chatStorage.get(conversationId);
